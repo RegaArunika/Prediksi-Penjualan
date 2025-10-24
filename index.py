@@ -356,16 +356,36 @@ if sarima_model is not None and active_dataset and os.path.exists(f"{active_data
                 ]:
                     slide = prs.slides.add_slide(prs.slide_layouts[5])
                     slide.shapes.title.text = title
-                    img_bytes = fig_obj.to_image(format="png", width=960, height=540)
-                    
+                    # Gunakan method write_html dan screenshot alternatif (tanpa Kaleido)
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".html") as html_tmp:
+                fig_obj.write_html(html_tmp.name)
+                import plotly.io as pio
+                try:
+                    # Coba gunakan kaleido jika ada
+                    img_bytes = pio.to_image(fig_obj, format="png", width=960, height=540)
                     with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as img_tmp:
                         img_tmp.write(img_bytes)
                         img_path = img_tmp.name
-                    
-                    slide.shapes.add_picture(img_path, Inches(0.5), Inches(1.5), width=Inches(9))
-                    os.remove(img_path)
+                except Exception:
+                    # Jika kaleido gagal, buat placeholder
+                    from PIL import Image, ImageDraw, ImageFont
+                    img = Image.new("RGB", (960, 540), color=(245, 245, 245))
+                    d = ImageDraw.Draw(img)
+                    d.text(
+                        (50, 250),
+                        f"Tampilan '{title}'\n(Kaleido tidak tersedia)",
+                        fill=(0, 0, 0)
+                    )
+                    img_path = html_tmp.name.replace(".html", ".png")
+                    img.save(img_path)
 
-                prs.save(tmpfile.name)
+            # Tambahkan gambar (hasil asli atau placeholder) ke slide PowerPoint
+            slide.shapes.add_picture(img_path, Inches(0.5), Inches(1.5), width=Inches(9))
+
+            # Bersihkan file sementara
+            os.remove(img_path)
+            os.remove(html_tmp.name)
+
 
             with open(tmpfile.name, "rb") as f:
                 ppt_bytes = f.read()
