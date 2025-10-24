@@ -340,53 +340,135 @@ if sarima_model is not None and active_dataset and os.path.exists(f"{active_data
         try:
             with tempfile.NamedTemporaryFile(delete=False, suffix=".pptx") as tmpfile:
                 prs = Presentation()
+
+                # --- Slide Judul / Ringkasan ---
                 title_slide_layout = prs.slide_layouts[0]
                 slide = prs.slides.add_slide(title_slide_layout)
                 slide.shapes.title.text = "Laporan Prediksi Pemasukan"
-                slide.placeholders[1].text = (
-                    f"Dataset: {active_dataset}\n"
-                    f"Periode Data Aktual: {hist_data['Periode'].min().strftime('%B %Y')} - {hist_data['Periode'].max().strftime('%B %Y')}\n"
-                    f"Periode Prediksi: {n_periods} bulan ke depan"
-                )
+                try:
+                    slide.placeholders[1].text = (
+                        f"Dataset: {active_dataset}\n"
+                        f"Periode Data Aktual: {hist_data['Periode'].min().strftime('%B %Y')} - {hist_data['Periode'].max().strftime('%B %Y')}\n"
+                        f"Periode Prediksi: {n_periods} bulan ke depan"
+                    )
+                except Exception:
+                    # fallback jika placeholder indeks berbeda
+                    txBox = slide.shapes.add_textbox(Inches(1), Inches(1.5), Inches(8), Inches(2))
+                    tf = txBox.text_frame
+                    tf.text = (
+                        f"Dataset: {active_dataset}\n"
+                        f"Periode Data Aktual: {hist_data['Periode'].min().strftime('%B %Y')} - {hist_data['Periode'].max().strftime('%B %Y')}\n"
+                        f"Periode Prediksi: {n_periods} bulan ke depan"
+                    )
 
+                # --- Slide ringkasan angka prediksi (tabel singkat) ---
+                try:
+                    summary_slide = prs.slides.add_slide(prs.slide_layouts[1])
+                    summary_slide.shapes.title.text = "Ringkasan Prediksi"
+                    tb = summary_slide.shapes.add_textbox(Inches(0.7), Inches(1.8), Inches(9), Inches(3)).text_frame
+                    tb.text = "Tabel Prediksi (1 baris per periode):"
+                    for idx, row in forecast_df.reset_index(drop=True).iterrows():
+                        p = tb.add_paragraph()
+                        p.text = f"{row['Periode'].strftime('%B %Y')} — Rp {row['Pemasukan']:,.0f}".replace(",", ".")
+                        p.level = 1
+                        if idx >= 9:  # batasi agar tidak terlalu panjang pada satu slide
+                            break
+                except Exception:
+                    pass
+
+                # --- Tambahkan grafik (coba kaleido; fallback placeholder) ---
                 for fig_obj, title in [
                     (fig_line, "Grafik Aktual vs Prediksi"),
                     (fig_ci, "Grafik Rentang Keyakinan Prediksi"),
                     (fig_bar, "Grafik Perbandingan Bulanan")
                 ]:
                     slide = prs.slides.add_slide(prs.slide_layouts[5])
-                    slide.shapes.title.text = title
-                    # Gunakan method write_html dan screenshot alternatif (tanpa Kaleido)
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".html") as html_tmp:
-                fig_obj.write_html(html_tmp.name)
-                import plotly.io as pio
+                    try:
+                        slide.shapes.title.text = title
+                    except Exception:
+                        # beberapa layout tidak memiliki title placeholder
+                        try:
+                            slide.shapes.add_textbox(Inches(0.5), Inches(0.3), Inches(9), Inches(0.5)).text_frame.text = title
+                        except Exception:
+                            pass
+
+                    html_tmp = None
+                    img_tmp_path = None
+                    try:
+                        # Simpan HTML sebagai cadangan
+                        with tempfile.NamedTemporaryFile(delete=False, suffix=".html") as html_tmp:
+                            fig_obj.write_html(html_tmp.name)
+
+                        # Coba konversi pakai kaleido (jika tersedia)
+                        import plotly.io as pio
+                        try:
+                            img_bytes = pio.to_image(fig_obj, format="png", width=960, height=540)
+                            with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as img_tmp:
+                                img_tmp.write(img_bytes)
+                                img_tmp_path = img_tmp.name
+                        except Exception:
+                            # fallback: buat placeholder PNG dengan Pillow
+                            try:
+                                from PIL import Image, ImageDraw, ImageFont
+                                img = Image.new("RGB", (960, 540), color=(245, 245, 245))
+                                d = ImageDraw.Draw(img)
+                                text = f"{title}\n(Kaleido tidak tersedia — placeholder)"
+                                # posisi teks sederhana
+                                d.text((40, 240), text, fill=(20, 20, 20))
+                                img_tmp_path = html_tmp.name.replace(".html", ".png")
+                                img.save(img_tmp_path)
+                            except Exception:
+                                # fallback terakhir: buat file teks sebagai penanda
+                                placeholder_path = html_tmp.name.replace(".html", ".txt")
+                                with open(placeholder_path, "w", encoding="utf-8") as ph:
+                                    ph.write(f"{title}\n(Kaleido & Pillow tidak tersedia — tidak ada gambar)\n")
+                                img_tmp_path = placeholder_path
+
+                        # Tambahkan gambar atau fallback text ke slide
+                        if img_tmp_path and os.path.exists(img_tmp_path):
+                            try:
+                                # Jika path berakhiran .png tambahkan sebagai gambar
+                                if img_tmp_path.lower().endswith(".png"):
+                                    slide.shapes.add_picture(img_tmp_path, Inches(0.5), Inches(1.2), width=Inches(9))
+                                else:
+                                    # tambahkan sebagai kotak teks jika bukan gambar
+                                    tx = slide.shapes.add_textbox(Inches(0.5), Inches(1.2), Inches(9), Inches(2)).text_frame
+                                    tx.text = open(img_tmp_path, "r", encoding="utf-8").read()
+                            except Exception as e_pic:
+                                # jika gagal menambahkan gambar, tulis pesan error di slide
+                                txBox = slide.shapes.add_textbox(Inches(0.5), Inches(1.2), Inches(9), Inches(2))
+                                txBox.text = f"Gagal menambahkan gambar: {e_pic}"
+                        else:
+                            txBox = slide.shapes.add_textbox(Inches(0.5), Inches(1.2), Inches(9), Inches(2))
+                            txBox.text = f"Gambar tidak tersedia untuk '{title}'."
+
+                    finally:
+                        # bersihkan file sementara jika ada
+                        try:
+                            if html_tmp is not None and os.path.exists(html_tmp.name):
+                                os.remove(html_tmp.name)
+                        except Exception:
+                            pass
+                        try:
+                            if img_tmp_path is not None and os.path.exists(img_tmp_path):
+                                os.remove(img_tmp_path)
+                        except Exception:
+                            pass
+
+                # --- Slide Kesimpulan ---
                 try:
-                    # Coba gunakan kaleido jika ada
-                    img_bytes = pio.to_image(fig_obj, format="png", width=960, height=540)
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as img_tmp:
-                        img_tmp.write(img_bytes)
-                        img_path = img_tmp.name
+                    cs_slide = prs.slides.add_slide(prs.slide_layouts[1])
+                    cs_slide.shapes.title.text = "Kesimpulan"
+                    txt = cs_slide.shapes.add_textbox(Inches(0.7), Inches(1.8), Inches(9), Inches(3)).text_frame
+                    txt.text = ("Laporan ini berisi prediksi pemasukan berdasarkan model SARIMA.\n"
+                                "Periksa slide 'Ringkasan Prediksi' untuk tabel singkat dan slide grafik untuk visualisasi.")
                 except Exception:
-                    # Jika kaleido gagal, buat placeholder
-                    from PIL import Image, ImageDraw, ImageFont
-                    img = Image.new("RGB", (960, 540), color=(245, 245, 245))
-                    d = ImageDraw.Draw(img)
-                    d.text(
-                        (50, 250),
-                        f"Tampilan '{title}'\n(Kaleido tidak tersedia)",
-                        fill=(0, 0, 0)
-                    )
-                    img_path = html_tmp.name.replace(".html", ".png")
-                    img.save(img_path)
+                    pass
 
-            # Tambahkan gambar (hasil asli atau placeholder) ke slide PowerPoint
-            slide.shapes.add_picture(img_path, Inches(0.5), Inches(1.5), width=Inches(9))
+                # Simpan presentasi setelah semua slide dibuat
+                prs.save(tmpfile.name)
 
-            # Bersihkan file sementara
-            os.remove(img_path)
-            os.remove(html_tmp.name)
-
-
+            # Baca dan tawarkan untuk di-download
             with open(tmpfile.name, "rb") as f:
                 ppt_bytes = f.read()
 
@@ -396,10 +478,16 @@ if sarima_model is not None and active_dataset and os.path.exists(f"{active_data
                 file_name=f"laporan_prediksi_{active_dataset}.pptx",
                 mime="application/vnd.openxmlformats-officedocument.presentationml.presentation"
             )
-            os.remove(tmpfile.name)
+
+            # hapus file temporer pptx
+            try:
+                os.remove(tmpfile.name)
+            except Exception:
+                pass
 
         except Exception as e:
             st.error(f"Gagal membuat PowerPoint: {e}")
+
 
 # ============================================================
 # Inisialisasi Ulang Sistem (Auto-reload dengan st.rerun)
