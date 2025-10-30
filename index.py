@@ -368,129 +368,134 @@ if sarima_model is not None and active_dataset and os.path.exists(f"{active_data
     st.plotly_chart(fig_bar, use_container_width=True)
 
 # ============================================================
-# Export PowerPoint
+# Export PowerPoint (Hanya muncul jika data & model ada)
 # ============================================================
-st.markdown("<hr class='divider'/>", unsafe_allow_html=True)
-st.subheader("💾 Export Visualisasi")
+if (
+    sarima_model is not None
+    and active_dataset
+    and os.path.exists(f"{active_dataset}_data.csv")
+):
+    st.markdown("<hr class='divider'/>", unsafe_allow_html=True)
+    st.subheader("💾 Export Visualisasi")
 
-progress_bar = None
+    progress_bar = None
 
-if st.button("📤 Export Visualisasi ke PowerPoint"):
-    progress_bar = st.progress(0)
-    try:
-        prs = Presentation()
-
-        # ============================================================
-        # SLIDE 1 — Judul + Info Dataset
-        # ============================================================
-        slide = prs.slides.add_slide(prs.slide_layouts[0])
-        slide.shapes.title.text = "Laporan Prediksi Pemasukan"
-
+    if st.button("📤 Export Visualisasi ke PowerPoint"):
+        progress_bar = st.progress(0)
         try:
-            slide.placeholders[1].text = (
-                f"Dataset: {active_dataset}\n"
-                f"Periode Data Aktual: {hist_data['Periode'].min().strftime('%B %Y')} - "
-                f"{hist_data['Periode'].max().strftime('%B %Y')}\n"
-                f"Periode Prediksi: {n_periods} bulan ke depan"
-            )
-        except Exception:
-            # fallback jika layout tidak punya placeholder kedua
-            txBox = slide.shapes.add_textbox(Inches(1), Inches(1.5), Inches(8), Inches(2))
-            tf = txBox.text_frame
-            tf.text = (
-                f"Dataset: {active_dataset}\n"
-                f"Periode Data Aktual: {hist_data['Periode'].min().strftime('%B %Y')} - "
-                f"{hist_data['Periode'].max().strftime('%B %Y')}\n"
-                f"Periode Prediksi: {n_periods} bulan ke depan"
-            )
+            prs = Presentation()
 
-        progress_bar.progress(20)
-        time.sleep(0.3)
+            # ============================================================
+            # SLIDE 1 — Judul + Info Dataset
+            # ============================================================
+            slide = prs.slides.add_slide(prs.slide_layouts[0])
+            slide.shapes.title.text = "Laporan Prediksi Pemasukan"
 
-        # ============================================================
-        # SLIDE 2 — Ringkasan Prediksi
-        # ============================================================
-        slide_summary = prs.slides.add_slide(prs.slide_layouts[1])
+            try:
+                slide.placeholders[1].text = (
+                    f"Dataset: {active_dataset}\n"
+                    f"Periode Data Aktual: {hist_data['Periode'].min().strftime('%B %Y')} - "
+                    f"{hist_data['Periode'].max().strftime('%B %Y')}\n"
+                    f"Periode Prediksi: {n_periods} bulan ke depan"
+                )
+            except Exception:
+                # fallback jika layout tidak punya placeholder kedua
+                txBox = slide.shapes.add_textbox(Inches(1), Inches(1.5), Inches(8), Inches(2))
+                tf = txBox.text_frame
+                tf.text = (
+                    f"Dataset: {active_dataset}\n"
+                    f"Periode Data Aktual: {hist_data['Periode'].min().strftime('%B %Y')} - "
+                    f"{hist_data['Periode'].max().strftime('%B %Y')}\n"
+                    f"Periode Prediksi: {n_periods} bulan ke depan"
+                )
 
-        title_shape = slide_summary.shapes.title
-        if title_shape:
-            title_shape.text = "Ringkasan Prediksi"
-        else:
-            tbox = slide_summary.shapes.add_textbox(Inches(1), Inches(1), Inches(8), Inches(1))
-            tbox.text = "Ringkasan Prediksi"
+            progress_bar.progress(20)
+            time.sleep(0.3)
 
-        # ✅ Tambahkan isi ringkasan (tidak kosong)
-        content_box = slide_summary.shapes.add_textbox(Inches(1), Inches(2), Inches(8.5), Inches(4))
-        content_frame = content_box.text_frame
-        content_frame.text = (
-            "Berikut adalah ringkasan hasil analisis dan prediksi pemasukan:\n"
-            f"- Dataset aktif: {active_dataset}\n"
-            f"- Jumlah periode historis: {len(hist_data)} bulan\n"
-            f"- Periode data aktual: {hist_data['Periode'].min().strftime('%B %Y')} - "
-            f"{hist_data['Periode'].max().strftime('%B %Y')}\n"
-            f"- Prediksi untuk {n_periods} bulan ke depan.\n\n"
-            "Grafik berikut akan memperlihatkan perbandingan antara data aktual, hasil prediksi, "
-            "dan rentang keyakinan model."
-        )
-
-        progress_bar.progress(40)
-        time.sleep(0.3)
-
-        # ============================================================
-        # SLIDE 3-5 — Grafik Visualisasi
-        # ============================================================
-        figs = [
-            (fig_line, "Grafik Aktual vs Prediksi"),
-            (fig_ci, "Grafik Rentang Keyakinan Prediksi"),
-            (fig_bar, "Grafik Perbandingan Bulanan")
-        ]
-
-        for i, (fig, title) in enumerate(figs):
-            slide = prs.slides.add_slide(prs.slide_layouts[5])
-            title_shape = slide.shapes.title
+            # ============================================================
+            # SLIDE 2 — Ringkasan Prediksi
+            # ============================================================
+            slide_summary = prs.slides.add_slide(prs.slide_layouts[1])
+            title_shape = slide_summary.shapes.title
             if title_shape:
-                title_shape.text = title
+                title_shape.text = "Ringkasan Prediksi"
             else:
-                tbox = slide.shapes.add_textbox(Inches(1), Inches(1), Inches(8), Inches(1))
-                tbox.text = title
+                tbox = slide_summary.shapes.add_textbox(Inches(1), Inches(1), Inches(8), Inches(1))
+                tbox.text = "Ringkasan Prediksi"
 
-            # Simpan grafik sementara
-            img_bytes = pio.to_image(fig, format="png", width=960, height=540)
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_img:
-                tmp_img.write(img_bytes)
-                slide.shapes.add_picture(tmp_img.name, Inches(0.5), Inches(1.2), width=Inches(9))
-
-            progress_bar.progress(50 + int((i + 1) * 15))
-            time.sleep(0.2)
-
-        # ============================================================
-        # Simpan dan tampilkan tombol download
-        # ============================================================
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pptx") as tmpfile:
-            prs.save(tmpfile.name)
-
-        progress_bar.progress(100)
-        time.sleep(0.5)
-
-        with open(tmpfile.name, "rb") as f:
-            st.download_button(
-                label="⬇️ Download Laporan PowerPoint",
-                data=f.read(),
-                file_name=f"laporan_prediksi_{active_dataset}.pptx",
-                mime="application/vnd.openxmlformats-officedocument.presentationml.presentation"
+            content_box = slide_summary.shapes.add_textbox(Inches(1), Inches(2), Inches(8.5), Inches(4))
+            content_frame = content_box.text_frame
+            content_frame.text = (
+                "Berikut adalah ringkasan hasil analisis dan prediksi pemasukan:\n"
+                f"- Dataset aktif: {active_dataset}\n"
+                f"- Jumlah periode historis: {len(hist_data)} bulan\n"
+                f"- Periode data aktual: {hist_data['Periode'].min().strftime('%B %Y')} - "
+                f"{hist_data['Periode'].max().strftime('%B %Y')}\n"
+                f"- Prediksi untuk {n_periods} bulan ke depan.\n\n"
+                "Grafik berikut akan memperlihatkan perbandingan antara data aktual, hasil prediksi, "
+                "dan rentang keyakinan model."
             )
 
-        os.remove(tmpfile.name)
-        st.success("✅ PowerPoint berhasil dibuat!")
+            progress_bar.progress(40)
+            time.sleep(0.3)
 
-    except Exception as e:
-        st.error(f"Gagal membuat PowerPoint: {e}")
+            # ============================================================
+            # SLIDE 3-5 — Grafik Visualisasi
+            # ============================================================
+            figs = [
+                (fig_line, "Grafik Aktual vs Prediksi"),
+                (fig_ci, "Grafik Rentang Keyakinan Prediksi"),
+                (fig_bar, "Grafik Perbandingan Bulanan")
+            ]
 
-    finally:
-        if progress_bar is not None:
+            for i, (fig, title) in enumerate(figs):
+                slide = prs.slides.add_slide(prs.slide_layouts[5])
+                title_shape = slide.shapes.title
+                if title_shape:
+                    title_shape.text = title
+                else:
+                    tbox = slide.shapes.add_textbox(Inches(1), Inches(1), Inches(8), Inches(1))
+                    tbox.text = title
+
+                img_bytes = pio.to_image(fig, format="png", width=960, height=540)
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_img:
+                    tmp_img.write(img_bytes)
+                    slide.shapes.add_picture(tmp_img.name, Inches(0.5), Inches(1.2), width=Inches(9))
+
+                progress_bar.progress(50 + int((i + 1) * 15))
+                time.sleep(0.2)
+
+            # ============================================================
+            # Simpan dan tampilkan tombol download
+            # ============================================================
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".pptx") as tmpfile:
+                prs.save(tmpfile.name)
+
+            progress_bar.progress(100)
             time.sleep(0.5)
-            progress_bar.empty()
 
+            with open(tmpfile.name, "rb") as f:
+                st.download_button(
+                    label="⬇️ Download Laporan PowerPoint",
+                    data=f.read(),
+                    file_name=f"laporan_prediksi_{active_dataset}.pptx",
+                    mime="application/vnd.openxmlformats-officedocument.presentationml.presentation"
+                )
+
+            os.remove(tmpfile.name)
+            st.success("✅ PowerPoint berhasil dibuat!")
+
+        except Exception as e:
+            st.error(f"Gagal membuat PowerPoint: {e}")
+
+        finally:
+            if progress_bar is not None:
+                time.sleep(0.5)
+                progress_bar.empty()
+else:
+    # Jika belum ada data atau model, sembunyikan export dan tampilkan info
+    st.markdown("<hr class='divider'/>", unsafe_allow_html=True)
+    st.info("💡 Fitur **Export Visualisasi ke PowerPoint** akan tersedia setelah Anda melatih model dan memiliki data aktif.")
 
 
 
@@ -507,15 +512,20 @@ Aplikasi akan kembali ke kondisi awal secara otomatis setelah proses selesai.
 
 if st.button("🔄 Inisialisasi Ulang Sistem"):
     try:
-        # Hapus file di direktori kerja (kecuali logo)
+        # Daftar file yang tidak boleh dihapus
+        protected_files = {"requirements.txt", "packages.txt", "runtime.txt"}
+
+        # Hapus file di direktori kerja (kecuali file penting & logo)
         for file in os.listdir():
             if file.startswith("Logo"):
+                continue
+            if file in protected_files:
                 continue
             if file.endswith((".pkl", ".csv", ".txt", ".backup.pkl", ".backup.csv")):
                 try:
                     os.remove(file)
-                except:
-                    pass
+                except Exception as e:
+                    st.warning(f"Gagal menghapus {file}: {e}")
 
         # Hapus file di folder temporary
         tmp_dir = tempfile.gettempdir()
@@ -523,8 +533,8 @@ if st.button("🔄 Inisialisasi Ulang Sistem"):
             if f.startswith("tmp") and f.endswith((".pptx", ".png")):
                 try:
                     os.remove(os.path.join(tmp_dir, f))
-                except:
-                    pass
+                except Exception as e:
+                    st.warning(f"Gagal menghapus file sementara: {f} ({e})")
 
         # Hapus session state agar data UI ikut ter-reset
         for key in list(st.session_state.keys()):
@@ -532,9 +542,10 @@ if st.button("🔄 Inisialisasi Ulang Sistem"):
 
         # Pesan sukses sebelum reload
         st.success("✅ Semua data, model, dan file sementara telah dihapus.")
-        st.info("Memuat ulang aplikasi...")
+        st.info("Memuat ulang aplikasi dalam beberapa detik...")
 
-        # 🔁 Auto refresh / reload halaman
+        # Delay kecil agar user sempat membaca notifikasi
+        time.sleep(2)
         st.rerun()
 
     except Exception as e:
