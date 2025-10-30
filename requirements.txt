@@ -11,3 +11,4 @@ seaborn
 tqdm
 kaleido
 pillow
+time
