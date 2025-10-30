@@ -304,7 +304,7 @@ if sarima_model is not None and active_dataset and os.path.exists(f"{active_data
     # --- Buat dan Tampilkan Semua Grafik ---
     st.write("---")
     fig_line = px.line(combined_vis, x="Periode", y="Pemasukan", color="Tipe", markers=True, 
-                       title=f"📈 Aktual vs Prediksi Pemasukan — Dataset: {active_dataset}",
+                       title=f"📈 Prediksi Pemasukan — Dataset: {active_dataset}",
                        color_discrete_map={"Aktual": "#3498db", "Prediksi": "#e74c3c"})
     fig_line.update_layout(legend_title_text="Jenis Data", yaxis_title="Pemasukan (Rp)", xaxis_title="Periode")
     st.plotly_chart(fig_line, use_container_width=True)
@@ -460,7 +460,7 @@ if sarima_model is not None and active_dataset and os.path.exists(f"{active_data
                     cs_slide = prs.slides.add_slide(prs.slide_layouts[1])
                     cs_slide.shapes.title.text = "Kesimpulan"
                     txt = cs_slide.shapes.add_textbox(Inches(0.7), Inches(1.8), Inches(9), Inches(3)).text_frame
-                    txt.text = ("Laporan ini berisi prediksi pemasukan berdasarkan model SARIMA.\n"
+                    txt.text = ("Laporan ini berisi prediksi pemasukan berdasarkan model prediksi.\n"
                                 "Periksa slide 'Ringkasan Prediksi' untuk tabel singkat dan slide grafik untuk visualisasi.")
                 except Exception:
                     pass
