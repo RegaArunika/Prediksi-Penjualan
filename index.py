@@ -18,6 +18,8 @@ import plotly.io as pio
 from pptx import Presentation
 from pptx.util import Inches
 
+RESET_FLAG = "reset_flag.txt"
+
 
 def preprocess_period_column(df):
     """Mempersiapkan kolom 'Periode' agar konsisten sebagai datetime (awal bulan)."""
@@ -106,9 +108,8 @@ st.markdown( """ <div style='text-align: center;'> <h1 style='font-size:40px; co
 # ============================================================
 # Upload File & Setup Dataset
 # ============================================================
-st.subheader("📂 Input Data Baru & Latih Model")
+st.subheader("📂 Input Data Baru")
 st.markdown("<hr class='divider'/>", unsafe_allow_html=True)
-
 uploaded_file = st.file_uploader("Upload data penjualan (CSV/XLSX, kolom: Periode & Pemasukan)", type=["csv", "xlsx"])
 
 contoh_data = pd.DataFrame({
@@ -117,7 +118,7 @@ contoh_data = pd.DataFrame({
 })
 csv_buffer = io.StringIO()
 contoh_data.to_csv(csv_buffer, index=False)
-st.download_button("⬇️ Download Contoh Data (CSV)", csv_buffer.getvalue(), "contoh_data.csv", "text/csv")
+st.download_button("⬇️ Download Template Data (CSV)", csv_buffer.getvalue(), "contoh_data.csv", "text/csv")
 
 
 active_dataset = None
@@ -125,17 +126,12 @@ if os.path.exists("active_dataset.txt"):
     with open("active_dataset.txt") as f:
         active_dataset = f.read().strip()
 
-
-sarima_model = None
-if active_dataset and os.path.exists(f"{active_dataset}_model.pkl"):
-    with open(f"{active_dataset}_model.pkl", "rb") as f:
-        sarima_model = pickle.load(f)
-
-
 # ============================================================
 # Proses Upload
 # ============================================================
 if uploaded_file:
+    st.session_state["uploaded_file_name"] = uploaded_file.name   # <<== SESSION
+
     current_dataset_name = active_dataset
     if current_dataset_name is None:
         current_dataset_name = Path(uploaded_file.name).stem
@@ -143,10 +139,11 @@ if uploaded_file:
             f.write(current_dataset_name)
         active_dataset = current_dataset_name
 
+    st.session_state["active_dataset"] = active_dataset           # <<== SESSION
+
     data_filename = f"{current_dataset_name}_data.csv"
 
     try:
-        # Baca file upload (parse dates jika csv)
         if uploaded_file.name.endswith(".csv"):
             new_data = pd.read_csv(uploaded_file)
         else:
@@ -156,397 +153,64 @@ if uploaded_file:
             st.error("❌ File harus memiliki kolom 'Periode' dan 'Pemasukan'.")
             st.stop()
 
-        # Preprocess & normalisasi
         new_data = preprocess_period_column(new_data)
 
         if os.path.exists(data_filename):
             old_data = pd.read_csv(data_filename)
             old_data = preprocess_period_column(old_data)
-            st.info(f"Dataset lama: {len(old_data)} baris (setelah normalisasi)")
-
             combined_data = pd.concat([old_data, new_data], ignore_index=True)
-            before = len(combined_data)
-            # Hapus duplikat berdasar Periode (setiap periode hanya 1 baris)
             combined_data = combined_data.drop_duplicates(subset=["Periode"], keep="last").sort_values("Periode").reset_index(drop=True)
-            after = len(combined_data)
-            removed = before - after
-            st.success(f"✅ Penggabungan selesai. {removed} baris duplikat dihapus. Total sekarang: {after} baris.")
         else:
             combined_data = new_data.copy()
-            st.success(f"✅ Dataset '{current_dataset_name}' berhasil diinputkan ({len(combined_data)} baris).")
 
-        # Simpan dengan format tanggal konsisten
+        # VALIDASI minimal 24 bulan
+        if len(combined_data) < 24:
+            st.error("❌ Data harus minimal 24 bulan (2 tahun).")
+            st.stop()
+
         combined_data.to_csv(data_filename, index=False, date_format="%Y-%m-%d")
-        st.info("Data terbaru yang digunakan:")
+
         st.dataframe(combined_data.tail(10))
+        st.session_state["data_saved_ok"] = True
+
+        # JIKA berhasil upload data → hapus flag reset agar tombol restore menghilang
+        if os.path.exists(RESET_FLAG):
+            os.remove(RESET_FLAG)
+
+
+        st.success("✅ Data sudah tersimpan. Silakan menuju halaman *Analisis* untuk proses training.")
 
     except Exception as e:
         st.error(f"Gagal memproses file: {e}")
 
+# setelah
+# st.success("✅ Data sudah tersimpan. Silakan menuju halaman *Analisis* untuk proses training.")
 
-# ============================================================
-# Tombol Train / Retrain Model (DIPINDAHKAN KE SINI)
-# ============================================================
-# Blok ini akan muncul di bawah uploader file jika sebuah dataset sudah aktif (tersimpan).
-if active_dataset and os.path.exists(f"{active_dataset}_data.csv"):
-    data_filename = f"{active_dataset}_data.csv"
-    model_filename = f"{active_dataset}_model.pkl"
+if st.session_state.get("data_saved_ok", False):
+    if st.button("➡️ Lanjut ke Halaman Insights"):
+        st.switch_page("pages/Analisis.py")
 
-    sales_data = pd.read_csv(data_filename)
-    sales_data = preprocess_period_column(sales_data)
-    last_period = sales_data["Periode"].iloc[-1].strftime("%B %Y")
-    
-    # Notifikasi status data dipindahkan ke sini
-    st.info(f"📅 Data terakhir: **{last_period}**")
+# hanya tampil kalau user habis reset dan belum upload data lagi
+if os.path.exists(RESET_FLAG) and not st.session_state.get("data_saved_ok", False):
+    if st.button("♻️ Kembalikan Model & Data dari Backup"):
+        backup_files = [f for f in os.listdir() if f.endswith("_model_backup.pkl")]
+        if backup_files:
+            restored_dataset_name = backup_files[0].replace("_model_backup.pkl", "")
+            backup_data = f"{restored_dataset_name}_data_backup.csv"
+            backup_model = f"{restored_dataset_name}_model_backup.pkl"
+            data_file = f"{restored_dataset_name}_data.csv"
+            model_file = f"{restored_dataset_name}_model.pkl"
 
-    train_button_label = "🚀 Train Model Baru" if sarima_model is None else "🔁 Retrain Model"
-    if st.button(train_button_label):
-        with st.spinner("Sedang melatih model... 🧠"):
-            try:
-                if len(sales_data) < 24:
-                    st.warning("⚠️ Jumlah data disarankan minimal 24 bulan untuk hasil optimal.")
+            shutil.copy(backup_model, model_file)
+            shutil.copy(backup_data, data_file)
 
-                y = sales_data["Pemasukan"]
-                y_log = np.log1p(y)
-                model = sm.tsa.statespace.SARIMAX(
-                    y_log, order=(1,1,1), seasonal_order=(1,1,1,12),
-                    enforce_stationarity=False, enforce_invertibility=False
-                ).fit(disp=False)
-                with open(model_filename, "wb") as f:
-                    pickle.dump(model, f)
-                sarima_model = model
-                st.success(f"✅ Model untuk '{active_dataset}' berhasil dilatih dengan data hingga {last_period}!")
-            except Exception as e:
-                st.error(f"Gagal melatih model: {e}")
-st.markdown("<hr class='divider'/>", unsafe_allow_html=True)
+            with open("active_dataset.txt", "w") as f:
+                f.write(restored_dataset_name)
 
-import time
+            st.session_state["active_dataset"] = restored_dataset_name
+            st.success(f"✅ Dataset '{restored_dataset_name}' sudah dikembalikan.")
 
-# ============================================================
-# Reset & Restore
-# ============================================================
-st.subheader("⚙️ Pengaturan Model")
-st.markdown("<hr class='divider'/>", unsafe_allow_html=True)
-
-col_reset, col_restore = st.columns(2)
-
-with col_reset:
-    if st.button("🧹 Reset Model & Data"):
-        try:
-            if active_dataset:
-                data_file = f"{active_dataset}_data.csv"
-                model_file = f"{active_dataset}_model.pkl"
-                backup_data = f"{active_dataset}_data_backup.csv"
-                backup_model = f"{active_dataset}_model_backup.pkl"
-
-                # Simpan backup dulu
-                if os.path.exists(model_file): shutil.copy(model_file, backup_model)
-                if os.path.exists(data_file): shutil.copy(data_file, backup_data)
-
-                # Hapus file aktif
-                for f in [model_file, data_file, "active_dataset.txt"]:
-                    if os.path.exists(f): os.remove(f)
-
-                st.toast(f"Model dan data '{active_dataset}' berhasil direset!", icon="✅", duration=6)
-                st.warning(f"⚠️ Halaman akan direfresh otomatis dalam beberapa detik...")
-
-                # Tunda agar notifikasi sempat muncul
-                time.sleep(5)
-                st.session_state["auto_reload"] = True
-                st.rerun()
-
-            else:
-                st.warning("⚠️ Tidak ada dataset aktif untuk direset.")
-                st.toast("Tidak ada dataset aktif untuk direset.", icon="⚠️", duration=6)
-
-        except Exception as e:
-            st.error(f"Gagal mereset: {e}")
-            st.toast(f"Gagal mereset model: {e}", icon="❌", duration=6)
-
-with col_restore:
-    if st.button("♻️ Kembalikan Model Setelah Reset"):
-        try:
-            restored_dataset_name = active_dataset
-            if restored_dataset_name is None:
-                backup_files = [f for f in os.listdir() if f.endswith("_model_backup.pkl")]
-                if backup_files:
-                    restored_dataset_name = backup_files[0].replace("_model_backup.pkl", "")
-
-            if restored_dataset_name:
-                data_file = f"{restored_dataset_name}_data.csv"
-                model_file = f"{restored_dataset_name}_model.pkl"
-                backup_data = f"{restored_dataset_name}_data_backup.csv"
-                backup_model = f"{restored_dataset_name}_model_backup.pkl"
-
-                if os.path.exists(backup_model) and os.path.exists(backup_data):
-                    shutil.copy(backup_model, model_file)
-                    shutil.copy(backup_data, data_file)
-                    with open("active_dataset.txt", "w") as f:
-                        f.write(restored_dataset_name)
-
-                    st.toast(f"Model '{restored_dataset_name}' berhasil dikembalikan!", icon="✅", duration=6)
-                    st.success(f"✅ Halaman akan direfresh otomatis dalam beberapa detik...")
-
-                    # Tunda agar notifikasi sempat muncul
-                    time.sleep(5)
-                    st.session_state["auto_reload"] = True
-                    st.rerun()
-
-                else:
-                    st.warning("⚠️ File backup tidak ditemukan.")
-                    st.toast("File backup tidak ditemukan.", icon="⚠️", duration=6)
-
-            else:
-                st.warning("⚠️ Tidak ada dataset aktif atau backup yang dapat dikembalikan.")
-                st.toast("Tidak ada dataset aktif atau backup untuk dikembalikan.", icon="⚠️", duration=6)
-
-        except Exception as e:
-            st.error(f"Gagal mengembalikan: {e}")
-            st.toast(f"Gagal mengembalikan model: {e}", icon="❌", duration=6)
-
-st.markdown("<hr class='divider'/>", unsafe_allow_html=True)
-
-# ============================================================
-# Prediksi & Visualisasi
-# ============================================================
-if sarima_model is not None and active_dataset and os.path.exists(f"{active_dataset}_data.csv"):
-    st.subheader("📈 Prediksi & Visualisasi")
-    st.markdown("<hr class='divider'/>", unsafe_allow_html=True)
-
-    n_periods = st.slider("Pilih jumlah bulan ke depan untuk prediksi:", 1, 24, 6)
-
-    # --- Persiapan Data untuk Visualisasi ---
-    hist_data = pd.read_csv(f"{active_dataset}_data.csv")
-    hist_data = preprocess_period_column(hist_data)
-    hist_data["Tipe"] = "Aktual"
-
-    forecast_res = sarima_model.get_forecast(steps=n_periods)
-    forecast_mean = np.expm1(forecast_res.predicted_mean)
-    conf_int_exp = np.expm1(forecast_res.conf_int())
-
-    forecast_df = pd.DataFrame({
-        "Periode": pd.date_range(hist_data["Periode"].iloc[-1] + pd.DateOffset(months=1), periods=n_periods, freq="MS"),
-        "Pemasukan": forecast_mean,
-        "Tipe": "Prediksi"
-    })
-    
-    combined_vis = pd.concat([hist_data, forecast_df], ignore_index=True)
-    
-    st.write("Tabel Hasil Prediksi:")
-    display_df = forecast_df.copy()
-    display_df["Periode"] = display_df["Periode"].dt.strftime("%B %Y")
-    display_df["Pemasukan (Rp)"] = display_df["Pemasukan"].apply(lambda x: f"Rp {x:,.0f}".replace(",", "."))
-    st.dataframe(display_df[["Periode", "Pemasukan (Rp)"]])
-
-    # --- Buat dan Tampilkan Semua Grafik ---
-    st.write("---")
-    fig_line = px.line(combined_vis, x="Periode", y="Pemasukan", color="Tipe", markers=True, 
-                       title=f"📈 Prediksi Pemasukan — Dataset: {active_dataset}",
-                       color_discrete_map={"Aktual": "#3498db", "Prediksi": "#e74c3c"})
-    fig_line.update_layout(legend_title_text="Jenis Data", yaxis_title="Pemasukan (Rp)", xaxis_title="Periode")
-    st.plotly_chart(fig_line, use_container_width=True)
-
-    st.write("---")
-    fig_ci = px.line(hist_data, x="Periode", y="Pemasukan", title="🎯 Prediksi Pemasukan dengan Rentang Keyakinan (Confidence Interval)")
-    fig_ci.data[0].name = 'Aktual'
-    fig_ci.data[0].showlegend = True
-    fig_ci.add_scatter(x=forecast_df["Periode"], y=forecast_df["Pemasukan"], mode="lines", name="Prediksi", line=dict(color="#e74c3c"))
-    fig_ci.add_scatter(x=forecast_df["Periode"], y=conf_int_exp.iloc[:, 1], mode="lines", line=dict(dash="dash", color="green"), name="Batas Atas CI")
-    fig_ci.add_scatter(x=forecast_df["Periode"], y=conf_int_exp.iloc[:, 0], mode="lines", line=dict(dash="dash", color="yellow"), name="Batas Bawah CI")
-    fig_ci.update_layout(yaxis_title="Pemasukan (Rp)", xaxis_title="Periode", legend_title_text="Keterangan")
-    st.plotly_chart(fig_ci, use_container_width=True)
-
-    st.write("---")
-    tail_periods = st.slider("Tampilkan N bulan terakhir pada Bar Chart:", 6, 36, 12)
-    bar_data = combined_vis.tail(tail_periods)
-    
-    fig_bar = px.bar(bar_data, x="Periode", y="Pemasukan", color="Tipe",
-                     barmode="group", title=f"📊 Perbandingan Pemasukan Bulanan (Aktual vs Prediksi) — {tail_periods} Bulan Terakhir",
-                     labels={"Pemasukan": "Pemasukan (Rp)"},
-                     color_discrete_map={"Aktual": "#3498db", "Prediksi": "#e74c3c"})
-    fig_bar.update_layout(xaxis_title="Periode", yaxis_title="Pemasukan (Rp)", legend_title_text="Jenis Data")
-    st.plotly_chart(fig_bar, use_container_width=True)
-
-# ============================================================
-# Export PowerPoint (Hanya muncul jika data & model ada)
-# ============================================================
-if (
-    sarima_model is not None
-    and active_dataset
-    and os.path.exists(f"{active_dataset}_data.csv")
-):
-    st.markdown("<hr class='divider'/>", unsafe_allow_html=True)
-    st.subheader("💾 Export Visualisasi")
-
-    progress_bar = None
-
-    if st.button("📤 Export Visualisasi ke PowerPoint"):
-        progress_bar = st.progress(0)
-        try:
-            prs = Presentation()
-
-            # ============================================================
-            # SLIDE 1 — Judul + Info Dataset
-            # ============================================================
-            slide = prs.slides.add_slide(prs.slide_layouts[0])
-            slide.shapes.title.text = "Laporan Prediksi Pemasukan"
-
-            try:
-                slide.placeholders[1].text = (
-                    f"Dataset: {active_dataset}\n"
-                    f"Periode Data Aktual: {hist_data['Periode'].min().strftime('%B %Y')} - "
-                    f"{hist_data['Periode'].max().strftime('%B %Y')}\n"
-                    f"Periode Prediksi: {n_periods} bulan ke depan"
-                )
-            except Exception:
-                # fallback jika layout tidak punya placeholder kedua
-                txBox = slide.shapes.add_textbox(Inches(1), Inches(1.5), Inches(8), Inches(2))
-                tf = txBox.text_frame
-                tf.text = (
-                    f"Dataset: {active_dataset}\n"
-                    f"Periode Data Aktual: {hist_data['Periode'].min().strftime('%B %Y')} - "
-                    f"{hist_data['Periode'].max().strftime('%B %Y')}\n"
-                    f"Periode Prediksi: {n_periods} bulan ke depan"
-                )
-
-            progress_bar.progress(20)
-            time.sleep(0.3)
-
-            # ============================================================
-            # SLIDE 2 — Ringkasan Prediksi
-            # ============================================================
-            slide_summary = prs.slides.add_slide(prs.slide_layouts[1])
-            title_shape = slide_summary.shapes.title
-            if title_shape:
-                title_shape.text = "Ringkasan Prediksi"
-            else:
-                tbox = slide_summary.shapes.add_textbox(Inches(1), Inches(1), Inches(8), Inches(1))
-                tbox.text = "Ringkasan Prediksi"
-
-            content_box = slide_summary.shapes.add_textbox(Inches(1), Inches(2), Inches(8.5), Inches(4))
-            content_frame = content_box.text_frame
-            content_frame.text = (
-                "Berikut adalah ringkasan hasil analisis dan prediksi pemasukan:\n"
-                f"- Dataset aktif: {active_dataset}\n"
-                f"- Jumlah periode historis: {len(hist_data)} bulan\n"
-                f"- Periode data aktual: {hist_data['Periode'].min().strftime('%B %Y')} - "
-                f"{hist_data['Periode'].max().strftime('%B %Y')}\n"
-                f"- Prediksi untuk {n_periods} bulan ke depan.\n\n"
-                "Grafik berikut akan memperlihatkan perbandingan antara data aktual, hasil prediksi, "
-                "dan rentang keyakinan model."
-            )
-
-            progress_bar.progress(40)
-            time.sleep(0.3)
-
-            # ============================================================
-            # SLIDE 3-5 — Grafik Visualisasi
-            # ============================================================
-            figs = [
-                (fig_line, "Grafik Aktual vs Prediksi"),
-                (fig_ci, "Grafik Rentang Keyakinan Prediksi"),
-                (fig_bar, "Grafik Perbandingan Bulanan")
-            ]
-
-            for i, (fig, title) in enumerate(figs):
-                slide = prs.slides.add_slide(prs.slide_layouts[5])
-                title_shape = slide.shapes.title
-                if title_shape:
-                    title_shape.text = title
-                else:
-                    tbox = slide.shapes.add_textbox(Inches(1), Inches(1), Inches(8), Inches(1))
-                    tbox.text = title
-
-                img_bytes = pio.to_image(fig, format="png", width=960, height=540)
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_img:
-                    tmp_img.write(img_bytes)
-                    slide.shapes.add_picture(tmp_img.name, Inches(0.5), Inches(1.2), width=Inches(9))
-
-                progress_bar.progress(50 + int((i + 1) * 15))
-                time.sleep(0.2)
-
-            # ============================================================
-            # Simpan dan tampilkan tombol download
-            # ============================================================
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".pptx") as tmpfile:
-                prs.save(tmpfile.name)
-
-            progress_bar.progress(100)
-            time.sleep(0.5)
-
-            with open(tmpfile.name, "rb") as f:
-                st.download_button(
-                    label="⬇️ Download Laporan PowerPoint",
-                    data=f.read(),
-                    file_name=f"laporan_prediksi_{active_dataset}.pptx",
-                    mime="application/vnd.openxmlformats-officedocument.presentationml.presentation"
-                )
-
-            os.remove(tmpfile.name)
-            st.success("✅ PowerPoint berhasil dibuat!")
-
-        except Exception as e:
-            st.error(f"Gagal membuat PowerPoint: {e}")
-
-        finally:
-            if progress_bar is not None:
-                time.sleep(0.5)
-                progress_bar.empty()
-else:
-    # Jika belum ada data atau model, sembunyikan export dan tampilkan info
-    st.markdown("<hr class='divider'/>", unsafe_allow_html=True)
-    st.info("💡 Fitur **Export Visualisasi ke PowerPoint** akan tersedia setelah Anda melatih model dan memiliki data aktif.")
-
-
-
-# ============================================================
-# Inisialisasi Ulang Sistem (Auto-reload dengan st.rerun)
-# ============================================================
-st.markdown("<hr class='divider'/>", unsafe_allow_html=True)
-st.subheader("🧨 Inisialisasi Ulang Sistem")
-
-st.markdown("""
-Gunakan tombol di bawah ini untuk menghapus **seluruh data, model, backup, dan file aktif**.  
-Aplikasi akan kembali ke kondisi awal secara otomatis setelah proses selesai.
-""")
-
-if st.button("🔄 Inisialisasi Ulang Sistem"):
-    try:
-        # Daftar file yang tidak boleh dihapus
-        protected_files = {"requirements.txt", "packages.txt", "runtime.txt"}
-
-        # Hapus file di direktori kerja (kecuali file penting & logo)
-        for file in os.listdir():
-            if file.startswith("Logo"):
-                continue
-            if file in protected_files:
-                continue
-            if file.endswith((".pkl", ".csv", ".txt", ".backup.pkl", ".backup.csv")):
-                try:
-                    os.remove(file)
-                except Exception as e:
-                    st.warning(f"Gagal menghapus {file}: {e}")
-
-        # Hapus file di folder temporary
-        tmp_dir = tempfile.gettempdir()
-        for f in os.listdir(tmp_dir):
-            if f.startswith("tmp") and f.endswith((".pptx", ".png")):
-                try:
-                    os.remove(os.path.join(tmp_dir, f))
-                except Exception as e:
-                    st.warning(f"Gagal menghapus file sementara: {f} ({e})")
-
-        # Hapus session state agar data UI ikut ter-reset
-        for key in list(st.session_state.keys()):
-            del st.session_state[key]
-
-        # Pesan sukses sebelum reload
-        st.success("✅ Semua data, model, dan file sementara telah dihapus.")
-        st.info("Memuat ulang aplikasi dalam beberapa detik...")
-
-        # Delay kecil agar user sempat membaca notifikasi
-        time.sleep(2)
-        st.rerun()
-
-    except Exception as e:
-        st.error(f"Gagal melakukan reset total: {e}")
+            time.sleep(1)
+            st.switch_page("pages/analisis.py")
+        else:
+            st.warning("Tidak ada file backup ditemukan.")
