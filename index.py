@@ -188,7 +188,7 @@ if uploaded_file:
 
 if st.session_state.get("data_saved_ok", False):
     if st.button("➡️ Lanjut ke Halaman Insights"):
-        st.switch_page("pages/Analisis.py")
+        st.switch_page("pages/analisis.py")
 
 # hanya tampil kalau user habis reset dan belum upload data lagi
 if os.path.exists(RESET_FLAG) and not st.session_state.get("data_saved_ok", False):
