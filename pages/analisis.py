@@ -168,33 +168,58 @@ st.markdown("<hr class='divider'/>", unsafe_allow_html=True)
 # ============================================================
 st.subheader("➕ Tambah Data Baru — Upload CSV/XLSX (Periode, Pemasukan)")
 
-additional_file = st.file_uploader("Upload file CSV/XLSX yang berisi kolom 'Periode' & 'Pemasukan'", type=["csv", "xlsx"], key="additional_upload")
+# jika baru saja selesai save, tampilkan info sekali
+if st.session_state.get("data_saved_ok", False):
+    st.info("📌 Dataset telah berhasil diperbarui.")
+    st.session_state["data_saved_ok"] = False
+else:
+    additional_file = st.file_uploader(
+        "Upload file CSV/XLSX yang berisi kolom 'Periode' & 'Pemasukan'",
+        type=["csv", "xlsx"],
+        key="additional_upload"
+    )
 
-if additional_file:
-    try:
-        if additional_file.name.lower().endswith(".csv"):
-            add_df = pd.read_csv(additional_file)
-        else:
-            add_df = pd.read_excel(additional_file)
+    if additional_file:
+        try:
+            # read
+            if additional_file.name.lower().endswith(".csv"):
+                add_df = pd.read_csv(additional_file)
+            else:
+                add_df = pd.read_excel(additional_file)
 
-        # Validasi kolom
-        if "Periode" not in add_df.columns or "Pemasukan" not in add_df.columns:
-            st.error("❌ File tambahan harus memiliki kolom 'Periode' dan 'Pemasukan'. Pastikan header tepat.")
-        else:
-            add_df = preprocess_period_column(add_df)
-            # gabungkan dan simpan
-            old = pd.read_csv(data_filename)
-            old = preprocess_period_column(old)
-            combined = pd.concat([old, add_df], ignore_index=True)
-            combined = combined.drop_duplicates(subset=["Periode"], keep="last").sort_values("Periode").reset_index(drop=True)
-            combined.to_csv(data_filename, index=False, date_format="%Y-%m-%d")
-            st.session_state["data_saved_ok"] = True
-            st.success("✅ Data tambahan berhasil ditambahkan ke dataset aktif (tidak otomatis melatih model).")
-            st.rerun()
-    except Exception as e:
-        st.error(f"Gagal menambahkan file: {e}")
+            # validasi header
+            if "Periode" not in add_df.columns or "Pemasukan" not in add_df.columns:
+                st.error("❌ File tambahan harus memiliki kolom 'Periode' dan 'Pemasukan'. Pastikan header tepat.")
+            else:
+                # preprocess keseuaian periode
+                add_df = preprocess_period_column(add_df)
+
+                # merge
+                old = pd.read_csv(data_filename)
+                old = preprocess_period_column(old)
+                combined = pd.concat([old, add_df], ignore_index=True)
+                combined = combined.drop_duplicates(subset=["Periode"], keep="last") \
+                                   .sort_values("Periode") \
+                                   .reset_index(drop=True)
+
+                # simpan
+                combined.to_csv(data_filename, index=False, date_format="%Y-%m-%d")
+
+                # tandai sebagai sukses
+                st.session_state["data_saved_ok"] = True
+
+                # clean upload session
+                for k in ["additional_upload"]:
+                    if k in st.session_state:
+                        del st.session_state[k]
+
+                st.rerun()
+
+        except Exception as e:
+            st.error(f"Gagal menambahkan file: {e}")
 
 st.markdown("<hr class='divider'/>", unsafe_allow_html=True)
+
 
 # ============================================================
 # Tombol Train / Retrain Model
